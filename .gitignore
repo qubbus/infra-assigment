@@ -1,0 +1,11 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Ansible
+*.retry
+*.log
+
+# Temp
+/tmp/
