@@ -5,7 +5,7 @@
   gather_facts: false
 
   vars:
-    repo_url: "https://github.com/your-username/infra-assigment.git"
+    repo_url: "https://github.com/qubbus/infra-assigment.git"
     repo_branch: "main"
     app_namespace: "web"
     k3s_kubeconfig: "/etc/rancher/k3s/k3s.yaml"
