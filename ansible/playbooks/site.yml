@@ -1,0 +1,94 @@
+---
+- name: Bootstrap local k3s and deploy ArgoCD
+  hosts: local
+  become: true
+  gather_facts: false
+
+  vars:
+    repo_url: "https://github.com/qubbus/infra-assigment.git"
+    repo_branch: "main"
+    app_namespace: "web"
+    k3s_kubeconfig: "/etc/rancher/k3s/k3s.yaml"
+
+  tasks:
+    - name: Ensure required packages are installed
+      ansible.builtin.package:
+        name:
+          - curl
+          - git
+        state: present
+
+    - name: Configure kernel networking parameters
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-k3s-network.conf
+        mode: "0644"
+        content: |
+          net.core.somaxconn = 4096
+          net.core.netdev_max_backlog = 16384
+          net.ipv4.tcp_max_syn_backlog = 8192
+          net.ipv4.tcp_fin_timeout = 15
+      notify: Reload sysctl
+
+    - name: Check if k3s is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_binary
+
+    - name: Download k3s installer
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: "0755"
+        force: false
+      when: not k3s_binary.stat.exists
+
+    - name: Install k3s single node cluster
+      ansible.builtin.command: /tmp/k3s-install.sh
+      environment:
+        INSTALL_K3S_EXEC: "--write-kubeconfig-mode 644"
+      when: not k3s_binary.stat.exists
+      changed_when: true
+
+    - name: Wait for k3s kubeconfig to be generated
+      ansible.builtin.wait_for:
+        path: "{{ k3s_kubeconfig }}"
+        timeout: 120
+
+    - name: Wait for Kubernetes node to become Ready
+      ansible.builtin.command: k3s kubectl get nodes
+      register: k3s_nodes
+      until: "' Ready ' in k3s_nodes.stdout"
+      retries: 24
+      delay: 5
+      changed_when: false
+
+    - name: Ensure argocd namespace exists
+      ansible.builtin.command: k3s kubectl create namespace argocd
+      register: ns_create
+      failed_when: ns_create.rc != 0 and 'AlreadyExists' not in ns_create.stderr
+      changed_when: ns_create.rc == 0
+
+    - name: Install ArgoCD manifests
+      ansible.builtin.shell: >-
+        k3s kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml --server-side --force-conflicts
+      register: argocd_install
+      changed_when: "'created' in argocd_install.stdout or 'configured' in argocd_install.stdout or 'serverside-applied' in argocd_install.stdout"
+
+    - name: Wait for ArgoCD server deployment rollout
+      ansible.builtin.command: k3s kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+      changed_when: false
+
+    - name: Render ArgoCD Application manifest
+      ansible.builtin.template:
+        src: argocd-application.yaml.j2
+        dest: /tmp/argocd-application.yaml
+        mode: "0644"
+
+    - name: Apply ArgoCD Application pointing to the repository
+      ansible.builtin.command: k3s kubectl apply -f /tmp/argocd-application.yaml
+      register: app_apply
+      changed_when: "'created' in app_apply.stdout or 'configured' in app_apply.stdout"
+
+  handlers:
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system

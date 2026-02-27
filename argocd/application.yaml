@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: web-nginx
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/qubbus/infra-assigment.git
+    targetRevision: main
+    path: kubernetes/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: web
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
